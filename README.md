@@ -1,5 +1,6 @@
-** How to deploy **
+# How to deploy
 
+```bash
 cd slack-agent/
 
 export GOOGLE_CLOUD_PROJECT="your-project-id"
@@ -47,18 +48,23 @@ URL=$(gcloud run services describe $SERVICE_NAME \
     --region $REGION --format='value(status.url)')
 echo "✅ Service URL: ${URL}"
 echo "👉 Set Slack Event URL to: ${URL}/slack/events"
+```
 
+## Configure Slack
 
-# Configure Slack
-Option 1: Create via UI
-Go to https://api.slack.com/apps
-Click "Create New App" → "From a manifest"
-Select your workspace
-Choose JSON format
-Paste the manifest.json
-Replace https://YOUR-CLOUD-RUN-URL with your actual Cloud Run URL
-Click Create
-Option 2: Create via Slack CLI
+### Option 1: Create via UI
+
+1. Go to https://api.slack.com/apps
+2. Click "Create New App" → "From a manifest"
+3. Select your workspace
+4. Choose JSON format
+5. Paste the `manifest.json`
+6. Replace `https://YOUR-CLOUD-RUN-URL` with your actual Cloud Run URL
+7. Click Create
+
+### Option 2: Create via Slack CLI
+
+```bash
 # Install Slack CLI: https://api.slack.com/automation/cli/install
 
 # Replace the URL first
@@ -66,17 +72,27 @@ sed -i 's|YOUR-CLOUD-RUN-URL|your-service-abc123-uc.a.run.app|g' manifest.json
 
 # Create the app
 slack app create --manifest manifest.json
+```
 
+## Local Development
 
-# Local Development
-## Set env vars instead of Secret Manager
+### Set env vars instead of Secret Manager
+
+```bash
 export SLACK_BOT_TOKEN="xoxb-..."
 export SLACK_SIGNING_SECRET="..."
 export GOOGLE_CLOUD_PROJECT="your-project"
+```
 
-## Run locally
+### Run locally
+
+```bash
 python main.py
+```
 
-## Expose with ngrok for Slack to reach you
+### Expose with ngrok for Slack to reach you
+
+```bash
 ngrok http 8080
-## → Use the ngrok URL as your Slack Event URL
+```
+*→ Use the ngrok URL as your Slack Event URL*
