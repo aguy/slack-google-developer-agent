@@ -55,14 +55,17 @@ def verify_slack_request(req) -> bool:
     signing_secret = get_secret("slack-signing-secret")
     timestamp = req.headers.get("X-Slack-Request-Timestamp", "")
 
-    if not timestamp or abs(time.time() - int(timestamp)) > 300:
+    try:
+        if not timestamp or abs(time.time() - int(timestamp)) > 300:
+            return False
+    except ValueError:
         return False
 
-    sig_basestring = f"v0:{timestamp}:{req.get_data(as_text=True)}"
+    sig_basestring = b"v0:" + timestamp.encode("utf-8") + b":" + req.get_data()
     expected = (
         "v0="
         + hmac.new(
-            signing_secret.encode(), sig_basestring.encode(), hashlib.sha256
+            signing_secret.encode("utf-8"), sig_basestring, hashlib.sha256
         ).hexdigest()
     )
     actual = req.headers.get("X-Slack-Signature", "")
@@ -124,7 +127,7 @@ def process_message(channel_id: str, user_id: str, text: str, thread_ts: str):
         try:
             get_slack_client().chat_postMessage(
                 channel=channel_id,
-                text=f"❌ Something went wrong: {str(e)}",
+                text="❌ Something went wrong while processing your request.",
                 thread_ts=thread_ts,
             )
         except Exception:
@@ -138,7 +141,7 @@ def slack_events():
     if not verify_slack_request(request):
         return jsonify({"error": "invalid signature"}), 403
 
-    data = request.json
+    data = request.get_json(silent=True) or {}
 
     if data.get("type") == "url_verification":
         return jsonify({"challenge": data["challenge"]})
@@ -182,4 +185,4 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=False)
