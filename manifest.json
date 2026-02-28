@@ -1,0 +1,46 @@
+{
+  "display_information": {
+    "name": "GCP Assistant",
+    "description": "Google Cloud Developer Assistant powered by Gemini",
+    "background_color": "#4285F4",
+    "long_description": "An AI-powered assistant that helps developers with Google Cloud Platform. Ask questions about GCP services, get gcloud commands, code snippets, Terraform examples, and best practices. Powered by Gemini and the Google Developer Knowledge API."
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "GCP Assistant",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "chat:write",
+        "im:history",
+        "im:read",
+        "im:write",
+        "channels:history"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://YOUR-CLOUD-RUN-URL/slack/events",
+      "bot_events": [
+        "app_mention",
+        "message.im"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": false
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
