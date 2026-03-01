@@ -1,1 +1,1 @@
-from .gcp_agent import root_agent, query_agent
+from .gcp_agent import query_agent

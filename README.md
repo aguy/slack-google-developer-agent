@@ -36,12 +36,14 @@ gcloud run deploy $SERVICE_NAME \
     --region $REGION \
     --project $GOOGLE_CLOUD_PROJECT \
     --set-env-vars "GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}" \
+    --set-env-vars "GOOGLE_GENAI_USE_VERTEXAI=true" \
     --allow-unauthenticated \
     --timeout 120 \
     --memory 1Gi \
     --cpu 1 \
-    --min-instances 0 \
-    --max-instances 5
+    --min-instances 1 \
+    --max-instances 5 \
+    --concurrency 20
 
 # Get the URL
 URL=$(gcloud run services describe $SERVICE_NAME \

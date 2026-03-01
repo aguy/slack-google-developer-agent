@@ -13,4 +13,5 @@ RUN useradd -m appuser \
     && chown -R appuser:appuser /app
 USER appuser
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "--timeout", "120", "main:app"]
+# Use 1 worker with threads — MCP needs a single shared event loop per process
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "120", "main:app"]

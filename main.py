@@ -4,8 +4,8 @@ import hmac
 import logging
 import os
 import re
-import threading
 import time
+import threading
 
 from flask import Flask, request, jsonify
 from google.cloud import secretmanager
@@ -19,6 +19,19 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
+
+# --- Shared Event Loop ---
+# MCP toolset holds async state; we need a single persistent loop
+_loop = asyncio.new_event_loop()
+_loop_thread = threading.Thread(target=_loop.run_forever, daemon=True)
+_loop_thread.start()
+
+
+def run_async(coro):
+    """Schedule a coroutine on the shared event loop and wait for the result."""
+    future = asyncio.run_coroutine_threadsafe(coro, _loop)
+    return future.result(timeout=120)
+
 
 # --- Secret Management ---
 
@@ -55,10 +68,7 @@ def verify_slack_request(req) -> bool:
     signing_secret = get_secret("slack-signing-secret")
     timestamp = req.headers.get("X-Slack-Request-Timestamp", "")
 
-    try:
-        if not timestamp or abs(time.time() - int(timestamp)) > 300:
-            return False
-    except ValueError:
+    if not timestamp or abs(time.time() - int(timestamp)) > 300:
         return False
 
     sig_basestring = b"v0:" + timestamp.encode("utf-8") + b":" + req.get_data()
@@ -97,17 +107,14 @@ def process_message(channel_id: str, user_id: str, text: str, thread_ts: str):
         slack = get_slack_client()
         session_id = f"slack-{channel_id}-{user_id}"
 
-        loop = asyncio.new_event_loop()
-        try:
-            response_text = loop.run_until_complete(
-                query_agent(
-                    user_id=user_id,
-                    session_id=session_id,
-                    message=text,
-                )
+        # Use the shared event loop instead of creating a new one
+        response_text = run_async(
+            query_agent(
+                user_id=user_id,
+                session_id=session_id,
+                message=text,
             )
-        finally:
-            loop.close()
+        )
 
         max_len = 3900
         chunks = [
@@ -141,7 +148,7 @@ def slack_events():
     if not verify_slack_request(request):
         return jsonify({"error": "invalid signature"}), 403
 
-    data = request.get_json(silent=True) or {}
+    data = request.json
 
     if data.get("type") == "url_verification":
         return jsonify({"challenge": data["challenge"]})
@@ -185,4 +192,4 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=True)
