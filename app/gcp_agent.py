@@ -23,21 +23,32 @@ MODEL = os.environ.get("MODEL")
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
 
+# Global credentials cache
+_cached_credentials = None
+_cached_project_id = None
 
 def get_auth_headers(request_context=None):
-    credentials, project_id = google.auth.default(
-        scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
-    final_project = os.environ.get("GOOGLE_CLOUD_PROJECT", project_id)
+    global _cached_credentials, _cached_project_id
+    
+    # Initialize credentials only once
+    if _cached_credentials is None:
+        logger.info("Initializing Google Auth credentials...")
+        _cached_credentials, _cached_project_id = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+    
+    # Only refresh if the token is expired or missing
+    if not _cached_credentials.valid:
+        logger.info("Refreshing Google Auth token...")
+        auth_request = google.auth.transport.requests.Request()
+        _cached_credentials.refresh(auth_request)
 
-    auth_request = google.auth.transport.requests.Request()
-    credentials.refresh(auth_request)
+    final_project = os.environ.get("GOOGLE_CLOUD_PROJECT", _cached_project_id)
 
     return {
-        "Authorization": f"Bearer {credentials.token}",
-        "X-Goog-User-Project": final_project,
+        "Authorization": f"Bearer {_cached_credentials.token}",
+        "X-Goog-User-Project": final_project or "",
     }
-
 
 def create_mcp_toolset():
     """Create a fresh MCP toolset instance."""
@@ -47,7 +58,7 @@ def create_mcp_toolset():
             timeout=30,
         ),
         header_provider=get_auth_headers,
-        errlog = logging.getLogger(__name__)
+        errlog=logging.getLogger(__name__)
     )
 
 
@@ -75,32 +86,42 @@ def create_agent():
 
 session_service = InMemorySessionService()
 
-# Initial agent and runner
-_agent = create_agent()
-_runner = Runner(
-    agent=_agent,
-    app_name="slack-gcp-assistant",
-    session_service=session_service,
-)
+# Global runner state and lock to prevent race conditions during rebuilds
+_runner = None
+_runner_lock = asyncio.Lock()
 
 
-def _rebuild_runner():
+async def get_runner() -> Runner:
+    """Get the current runner or initialize it if it doesn't exist."""
+    global _runner
+    async with _runner_lock:
+        if _runner is None:
+            logger.info("Initializing agent and runner on the async loop...")
+            _agent = create_agent()
+            _runner = Runner(
+                agent=_agent,
+                app_name="slack-gcp-assistant",
+                session_service=session_service,
+            )
+        return _runner
+
+
+async def rebuild_runner() -> Runner:
     """Rebuild the agent and runner with a fresh MCP connection."""
-    global _agent, _runner
-    logger.info("Rebuilding agent and runner with fresh MCP connection...")
-    _agent = create_agent()
-    _runner = Runner(
-        agent=_agent,
-        app_name="slack-gcp-assistant",
-        session_service=session_service,
-    )
-    return _runner
+    global _runner
+    async with _runner_lock:
+        logger.info("Rebuilding agent and runner with fresh MCP connection...")
+        _agent = create_agent()
+        _runner = Runner(
+            agent=_agent,
+            app_name="slack-gcp-assistant",
+            session_service=session_service,
+        )
+        return _runner
 
 
 async def query_agent(user_id: str, session_id: str, message: str) -> str:
     """Send a message to the agent and return the text response with retry logic."""
-    global _runner
-
     request_id = f"{session_id}-{int(time.time())}"
     logger.info(f"[{request_id}] Agent query start | user={user_id} | message={message[:100]}")
 
@@ -123,6 +144,7 @@ async def query_agent(user_id: str, session_id: str, message: str) -> str:
     )
 
     last_error = None
+    runner = await get_runner()
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -130,7 +152,7 @@ async def query_agent(user_id: str, session_id: str, message: str) -> str:
             start_time = time.time()
 
             response_text = ""
-            async for event in _runner.run_async(
+            async for event in runner.run_async(
                 user_id=user_id,
                 session_id=session_id,
                 new_message=user_content,
@@ -158,7 +180,7 @@ async def query_agent(user_id: str, session_id: str, message: str) -> str:
                 f"error={e}",
                 exc_info=True,
             )
-            _runner = _rebuild_runner()
+            runner = await rebuild_runner()
 
             if attempt < MAX_RETRIES:
                 await asyncio.sleep(RETRY_DELAY * attempt)
@@ -176,7 +198,7 @@ async def query_agent(user_id: str, session_id: str, message: str) -> str:
                     exc_info=True,
                 )
                 # Force token refresh on 403
-                _runner = _rebuild_runner()
+                runner = await rebuild_runner()
             else:
                 logger.error(
                     f"[{request_id}] Agent error | "
