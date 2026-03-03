@@ -13,8 +13,34 @@ from slack_sdk import WebClient
 
 from app.gcp_agent import query_agent
 
-logging.basicConfig(level=logging.INFO)
+# --- Configure logging levels ---
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=log_level,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 logger = logging.getLogger(__name__)
+
+# --- Enable HTTP-level tracing to catch raw 403 responses ---
+# Set via env var: MCP_HTTP_DEBUG=true
+if os.environ.get("MCP_HTTP_DEBUG", "").lower() == "true":
+    # httpx (used by MCP SDK)
+    logging.getLogger("httpx").setLevel(logging.DEBUG)
+    logging.getLogger("httpcore").setLevel(logging.DEBUG)
+
+    # urllib3 (used by google-auth)
+    logging.getLogger("urllib3").setLevel(logging.DEBUG)
+
+    # MCP SDK internals
+    logging.getLogger("mcp").setLevel(logging.DEBUG)
+    logging.getLogger("google.adk.tools.mcp_tool").setLevel(logging.DEBUG)
+
+    logger.info("🔍 MCP HTTP debug logging ENABLED")
+else:
+    # Keep HTTP libraries quiet in production
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 app = Flask(__name__)
 
@@ -134,7 +160,7 @@ def process_message(channel_id: str, user_id: str, text: str, thread_ts: str):
         try:
             get_slack_client().chat_postMessage(
                 channel=channel_id,
-                text="❌ Something went wrong while processing your request.",
+                text="❌ Something went wrong while processing your request. ",
                 thread_ts=thread_ts,
             )
         except Exception:
@@ -145,6 +171,7 @@ def process_message(channel_id: str, user_id: str, text: str, thread_ts: str):
 
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
+    logger.info(f"Received Slack event: {request.json}")
     if not verify_slack_request(request):
         return jsonify({"error": "invalid signature"}), 403
 
@@ -188,6 +215,7 @@ def slack_events():
 
 @app.route("/health", methods=["GET"])
 def health():
+    logger.info("Health check")
     return jsonify({"status": "healthy"})
 
 

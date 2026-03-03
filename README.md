@@ -15,13 +15,6 @@ gcloud services enable \
     aiplatform.googleapis.com \
     --project=$GOOGLE_CLOUD_PROJECT
 
-# Store Slack secrets
-echo -n "xoxb-your-bot-token" | gcloud secrets create slack-bot-token \
-    --data-file=- --project=$GOOGLE_CLOUD_PROJECT
-
-echo -n "your-signing-secret" | gcloud secrets create slack-signing-secret \
-    --data-file=- --project=$GOOGLE_CLOUD_PROJECT
-
 # Grant the default compute SA access to secrets
 PROJECT_NUMBER=$(gcloud projects describe $GOOGLE_CLOUD_PROJECT --format='value(projectNumber)')
 SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
@@ -37,6 +30,8 @@ gcloud run deploy $SERVICE_NAME \
     --project $GOOGLE_CLOUD_PROJECT \
     --set-env-vars "GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}" \
     --set-env-vars "GOOGLE_GENAI_USE_VERTEXAI=true" \
+    --set-env-vars "MODEL=gemini-2.5-flash" \
+    --set-env-vars "MCP_HTTP_DEBUG=false" \
     --allow-unauthenticated \
     --timeout 120 \
     --memory 1Gi \
@@ -51,6 +46,7 @@ URL=$(gcloud run services describe $SERVICE_NAME \
 echo "✅ Service URL: ${URL}"
 echo "👉 Set Slack Event URL to: ${URL}/slack/events"
 ```
+
 
 ## Configure Slack
 
@@ -75,6 +71,15 @@ sed -i 's|YOUR-CLOUD-RUN-URL|your-service-abc123-uc.a.run.app|g' manifest.json
 # Create the app
 slack app create --manifest manifest.json
 ```
+
+## Store Slack secrets
+```bash
+echo -n "xoxb-your-bot-token" | gcloud secrets create slack-bot-token \
+    --data-file=- --project=$GOOGLE_CLOUD_PROJECT
+
+echo -n "your-signing-secret" | gcloud secrets create slack-signing-secret \
+    --data-file=- --project=$GOOGLE_CLOUD_PROJECT
+    ```
 
 ## Local Development
 

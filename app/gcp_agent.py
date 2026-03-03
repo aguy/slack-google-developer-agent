@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 
 import google.auth
 import google.auth.transport.requests
@@ -14,6 +15,9 @@ from google.genai import types
 logger = logging.getLogger(__name__)
 
 DEVELOPER_KNOWLEDGE_MCP_URL = "https://developerknowledge.googleapis.com/mcp"
+
+# Model
+MODEL = os.environ.get("MODEL")
 
 # Retry configuration
 MAX_RETRIES = 3
@@ -29,11 +33,10 @@ def get_auth_headers(request_context=None):
     auth_request = google.auth.transport.requests.Request()
     credentials.refresh(auth_request)
 
-    headers = {"Authorization": f"Bearer {credentials.token}"}
-    if final_project:
-        headers["X-Goog-User-Project"] = final_project
-
-    return headers
+    return {
+        "Authorization": f"Bearer {credentials.token}",
+        "X-Goog-User-Project": final_project,
+    }
 
 
 def create_mcp_toolset():
@@ -44,6 +47,7 @@ def create_mcp_toolset():
             timeout=30,
         ),
         header_provider=get_auth_headers,
+        errlog = logging.getLogger(__name__)
     )
 
 
@@ -51,13 +55,19 @@ def create_agent():
     """Create a fresh agent with a new MCP toolset."""
     return LlmAgent(
         name="gcp_assistant",
-        model="gemini-2.0-flash",
+        model=MODEL,
         description="Google Cloud Developer Assistant",
         instruction=(
-            "You are an expert Google Cloud Solutions Architect. "
-            "Provide precise technical assistance with actionable gcloud commands, "
-            "code snippets, and best practices. Be concise and direct. "
-            "Use your tools to look up the latest documentation when needed."
+            "You are an expert Google Cloud Solutions Architect and Developer Advocate. "
+            "Your goal is to provide precise, high-quality technical assistance to developers building on Google Cloud."
+            "You answer questions about Google Products and only Google Products."
+            "If you get questions about AWS or Azure, tell the user that you are not qualified to answer those questions."
+            "If you don't know the answer, tell the user that you don't know and ask for help."
+            "Guidelines:\n"
+            "1. **Technical Accuracy**: Provide up-to-date commands and API usage. Use your search tools to verify recent changes.\n"
+            "2. **Actionable Examples**: Prefer providing gcloud commands, code snippets, or Terraform blocks over long descriptions.\n"
+            "3. **Best Practices**: Focus on security, cost-optimization, and following the Google Cloud Architecture Framework.\n"
+            "4. **Conciseness**: Give direct answers and speak developer to developer."
         ),
         tools=[create_mcp_toolset()],
     )
@@ -91,6 +101,9 @@ async def query_agent(user_id: str, session_id: str, message: str) -> str:
     """Send a message to the agent and return the text response with retry logic."""
     global _runner
 
+    request_id = f"{session_id}-{int(time.time())}"
+    logger.info(f"[{request_id}] Agent query start | user={user_id} | message={message[:100]}")
+
     session = await session_service.get_session(
         app_name="slack-gcp-assistant",
         user_id=user_id,
@@ -113,6 +126,9 @@ async def query_agent(user_id: str, session_id: str, message: str) -> str:
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
+            logger.info(f"[{request_id}] Attempt {attempt}/{MAX_RETRIES}")
+            start_time = time.time()
+
             response_text = ""
             async for event in _runner.run_async(
                 user_id=user_id,
@@ -124,27 +140,54 @@ async def query_agent(user_id: str, session_id: str, message: str) -> str:
                         if part.text:
                             response_text += part.text
 
+            elapsed = time.time() - start_time
+            logger.info(
+                f"[{request_id}] Success | "
+                f"attempt={attempt} | "
+                f"elapsed={elapsed:.2f}s | "
+                f"response_len={len(response_text)}"
+            )
+
             return response_text if response_text else "I didn't get a response. Please try again."
 
         except ConnectionError as e:
             last_error = e
             logger.warning(
-                f"MCP connection failed (attempt {attempt}/{MAX_RETRIES}): {e}"
+                f"[{request_id}] MCP ConnectionError | "
+                f"attempt={attempt}/{MAX_RETRIES} | "
+                f"error={e}",
+                exc_info=True,
             )
-
-            # Rebuild the runner with a fresh MCP toolset
             _runner = _rebuild_runner()
 
             if attempt < MAX_RETRIES:
-                await asyncio.sleep(RETRY_DELAY * attempt)  # Exponential-ish backoff
+                await asyncio.sleep(RETRY_DELAY * attempt)
 
         except Exception as e:
             last_error = e
-            logger.error(f"Agent query failed (attempt {attempt}/{MAX_RETRIES}): {e}")
+            error_str = str(e)
+
+            # Detect and log 403 specifically
+            if "403" in error_str:
+                logger.error(
+                    f"[{request_id}] 🔴 403 FORBIDDEN | "
+                    f"attempt={attempt}/{MAX_RETRIES} | "
+                    f"error={e}",
+                    exc_info=True,
+                )
+                # Force token refresh on 403
+                _runner = _rebuild_runner()
+            else:
+                logger.error(
+                    f"[{request_id}] Agent error | "
+                    f"attempt={attempt}/{MAX_RETRIES} | "
+                    f"error_type={type(e).__name__} | "
+                    f"error={e}",
+                    exc_info=True,
+                )
 
             if attempt < MAX_RETRIES:
-                await asyncio.sleep(RETRY_DELAY)
-            else:
-                break
+                await asyncio.sleep(RETRY_DELAY * attempt)
 
+    logger.error(f"[{request_id}] All retries exhausted | last_error={last_error}")
     return f"⚠️ I'm having trouble connecting to my knowledge tools. Please try again in a moment. (Error: {last_error})"
