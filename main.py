@@ -89,14 +89,31 @@ def handle_message(event, say, logger):
     session_id = f"slack-{channel_id}-{user_id}"
 
     try:
-        # Run the async agent query synchronously on the Bolt worker thread
-        response_text = run_async(query_agent(user_id=user_id, session_id=session_id, message=text))
+        agent = query_agent(user_id=user_id, session_id=session_id, message=text)
         
-        # Slack has a strict 4000 character limit per message
-        max_len = 3900
-        for i in range(0, len(response_text), max_len):
-            say(text=response_text[i:i + max_len], thread_ts=thread_ts)
-            
+        # Using Slack-Bolt built-in streaming (from slack-sdk/slack-bolt >= 1.26)
+        # This creates a ChatStream instance that automatically manages 
+        # API calls: chat.startStream, chat.appendStream, chat.stopStream.
+        stream = bolt_app.client.chat_stream(
+            channel=channel_id,
+            thread_ts=thread_ts
+        )
+        
+        while True:
+            try:
+                # Wait for next chunk from the async agent
+                future = asyncio.run_coroutine_threadsafe(anext(agent), _loop)
+                chunk = future.result(timeout=120)
+                
+                if chunk:
+                    stream.append(markdown_text=chunk)
+                        
+            except StopAsyncIteration:
+                break
+
+        # Let the SDK finalize the message and stop the "thinking..." state
+        stream.stop()
+
     except Exception as e:
         logger.error(f"Error handling Slack message: {e}", exc_info=True)
         say(text="❌ Something went wrong while processing your request.", thread_ts=thread_ts)

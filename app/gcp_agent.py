@@ -83,8 +83,10 @@ async def get_runner(force_rebuild: bool = False) -> Runner:
             _runner = create_runner()
         return _runner
 
-async def query_agent(user_id: str, session_id: str, message: str) -> str:
-    """Send a message to the agent, handling sessions and connection retries."""
+async def query_agent(user_id: str, session_id: str, message: str):
+    """Send a message to the agent, handling sessions and connection retries.
+    Yields text chunks as they become available.
+    """
     for attempt in range(1, 4):
         try:
             runner = await get_runner()
@@ -102,10 +104,20 @@ async def query_agent(user_id: str, session_id: str, message: str) -> str:
                 session_id=session_id,
                 new_message=user_content,
             ):
-                if event.is_final_response() and event.content and event.content.parts:
-                    response_text += "".join(p.text for p in event.content.parts if p.text)
+                if event.author != "user" and event.content and event.content.parts:
+                    text_from_event = "".join(getattr(p, "text", "") for p in event.content.parts)
+                    if text_from_event:
+                        if response_text and text_from_event.startswith(response_text):
+                            new_text = text_from_event[len(response_text):]
+                        else:
+                            new_text = text_from_event
+                        if new_text:
+                            yield new_text
+                            response_text = text_from_event  # Update to full text correctly
 
-            return response_text or "No response generated."
+            if not response_text:
+                yield "No response generated."
+            return
 
         except Exception as e:
             logger.error(f"Agent query failed on attempt {attempt}: {e}", exc_info=attempt == 3)
@@ -117,4 +129,4 @@ async def query_agent(user_id: str, session_id: str, message: str) -> str:
             if attempt < 3:
                 await asyncio.sleep(2)
             else:
-                return f"⚠️ I'm having trouble connecting to my knowledge tools."
+                yield f"⚠️ I'm having trouble connecting to my knowledge tools."

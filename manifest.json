@@ -1,7 +1,7 @@
 {
   "display_information": {
-    "name": "GCP Assistant",
-    "description": "Google Cloud Developer Assistant powered by Gemini",
+    "name": "Google Developer Assistant",
+    "description": "Google Developer Assistant powered by Gemini",
     "background_color": "#4285F4",
     "long_description": "An AI-powered assistant that helps developers with Google Cloud Platform. Ask questions about GCP services, get gcloud commands, code snippets, Terraform examples, and best practices. Powered by Gemini and the Google Developer Knowledge API."
   },
