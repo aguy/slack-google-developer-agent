@@ -33,6 +33,7 @@ def get_project_id():
     return project_id
 
 PROJECT_ID = get_project_id()
+logger.info(f"Project ID: {PROJECT_ID}")
 
 # --- Secret Management ---
 _secrets_cache = {}
@@ -71,7 +72,7 @@ bolt_app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
 
 @bolt_app.event("app_mention")
 @bolt_app.event("message")
-def handle_message(event, say, logger):
+def handle_message(event, say, logger, context):
     # Ignore messages sent by bots
     if event.get("bot_id") or event.get("subtype") == "bot_message":
         return
@@ -86,6 +87,7 @@ def handle_message(event, say, logger):
     channel_id = event.get("channel")
     user_id = event.get("user")
     thread_ts = event.get("thread_ts") or event.get("ts")
+    team_id = event.get("team") or context.get("team_id")
     session_id = f"slack-{channel_id}-{user_id}"
 
     try:
@@ -96,7 +98,9 @@ def handle_message(event, say, logger):
         # API calls: chat.startStream, chat.appendStream, chat.stopStream.
         stream = bolt_app.client.chat_stream(
             channel=channel_id,
-            thread_ts=thread_ts
+            thread_ts=thread_ts,
+            recipient_team_id=team_id,
+            recipient_user_id=user_id
         )
         
         while True:
@@ -116,8 +120,12 @@ def handle_message(event, say, logger):
 
     except Exception as e:
         logger.error(f"Error handling Slack message: {e}", exc_info=True)
-        say(text="❌ Something went wrong while processing your request.", thread_ts=thread_ts)
-
+        if hasattr(e, "response"):
+            logger.error(f"Slack API Error response: {e.response}")
+        try:
+            say(text="❌ Something went wrong while processing your request.", thread_ts=thread_ts)
+        except Exception as say_e:
+            logger.error(f"Failed to send fallback error message: {say_e}")
 
 # --- Flask Web Server Setup ---
 app = Flask(__name__)

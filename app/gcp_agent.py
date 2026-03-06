@@ -51,7 +51,7 @@ def create_runner() -> Runner:
     
     agent = LlmAgent(
         name="gcp_assistant",
-        model=os.environ.get("MODEL"),
+        model=os.environ.get("MODEL", "gemini-2.5-flash"),
         description="Google Cloud Developer Assistant",
         instruction=(
             "You are an expert Google Cloud Solutions Architect and Developer Advocate. "
@@ -105,7 +105,7 @@ async def query_agent(user_id: str, session_id: str, message: str):
                 new_message=user_content,
             ):
                 if event.author != "user" and event.content and event.content.parts:
-                    text_from_event = "".join(getattr(p, "text", "") for p in event.content.parts)
+                    text_from_event = "".join(getattr(p, "text", "") or "" for p in event.content.parts)
                     if text_from_event:
                         if response_text and text_from_event.startswith(response_text):
                             new_text = text_from_event[len(response_text):]
